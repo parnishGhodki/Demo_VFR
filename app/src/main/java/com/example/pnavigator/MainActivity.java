@@ -2,9 +2,22 @@ package com.example.pnavigator;
 
 // Classes needed to add the location engine
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -13,13 +26,19 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 
 import com.mapbox.android.core.location.LocationEngine;
+import com.mapbox.android.core.location.LocationEngineCallback;
+import com.mapbox.android.core.location.LocationEngineProvider;
+import com.mapbox.android.core.location.LocationEngineRequest;
+import com.mapbox.android.core.location.LocationEngineResult;
 import com.mapbox.android.core.permissions.PermissionsListener;
 import com.mapbox.android.core.permissions.PermissionsManager;
 import com.mapbox.mapboxsdk.Mapbox;
 import com.mapbox.mapboxsdk.camera.CameraPosition;
 import com.mapbox.mapboxsdk.camera.CameraUpdateFactory;
+import com.mapbox.mapboxsdk.geometry.LatLng;
 import com.mapbox.mapboxsdk.geometry.LatLngBounds;
 import com.mapbox.mapboxsdk.location.LocationComponent;
 import com.mapbox.mapboxsdk.location.LocationComponentActivationOptions;
@@ -36,23 +55,24 @@ import com.mapbox.mapboxsdk.offline.OfflineRegionError;
 import com.mapbox.mapboxsdk.offline.OfflineRegionStatus;
 import com.mapbox.mapboxsdk.offline.OfflineTilePyramidRegionDefinition;
 import com.mapbox.mapboxsdk.plugins.building.BuildingPlugin;
+import com.mapbox.mapboxsdk.style.layers.Layer;
 
 import org.jetbrains.annotations.NotNull;
 import org.json.JSONObject;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
 import timber.log.Timber;
-/**
- * Download, view, navigate to, and delete an offline region.
- */
+
 public class MainActivity extends AppCompatActivity  implements
         OnMapReadyCallback, PermissionsListener {
 
-//    private static final String TAG = "OffManActivity";
-// Variables needed to add the location engine
-private LocationEngine locationEngine;
+    private LocationManager locationManager;
+    private LocationListener locationListener;
+    private LocationEngine locationEngine;
+    private Location locationNew;
 
     // JSON encoding/decoding
     public static final String JSON_CHARSET = "UTF-8";
@@ -76,6 +96,35 @@ private LocationEngine locationEngine;
     private PermissionsManager permissionsManager;
     private BuildingPlugin buildingPlugin;
 
+    CameraPosition gps;
+
+    int flag = 0;
+    private MainActivityLocationCallback callback = new MainActivityLocationCallback(this);
+
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+
+        MenuInflater menuInflater = getMenuInflater();
+        menuInflater.inflate(R.menu.main_menu, menu);
+
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+
+        switch (item.getItemId()){
+            case R.id.action_favorite:
+                back();
+            case R.id.action_settings:
+                setBuildingPlugin();
+            default:
+                return super.onOptionsItemSelected(item);
+
+        }
+
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,10 +138,64 @@ private LocationEngine locationEngine;
         setContentView(R.layout.activity_main);
 
         // Set up the MapView
+        Log.i("parnish","mapview write");
         mapView = findViewById(R.id.mapView);
         mapView.onCreate(savedInstanceState);
         mapView.getMapAsync(this);
+
+
+        if(Build.VERSION.SDK_INT >=23 && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},100);
+
+
+        }
+
+        locationListener = new LocationListener() {
+
+            @Override
+            public void onLocationChanged(Location location) {
+
+                Log.i("location","location");
+
+                locationNew = location;
+
+                gps = new CameraPosition.Builder()
+                        .target(new LatLng(location.getLatitude(), location.getLongitude()))
+                        .zoom(map.getCameraPosition().zoom)
+                        .tilt(map.getCameraPosition().tilt)
+                        .build();
+
+                map.animateCamera(CameraUpdateFactory.newCameraPosition(gps));
+
+                //Toast.makeText(,"1",Toast.LENGTH_LONG).show();
+            }
+
+            @Override
+            public void onStatusChanged(String provider, int status, Bundle extras) {
+
+            }
+
+            @Override
+            public void onProviderEnabled(String provider) {
+
+            }
+
+            @Override
+            public void onProviderDisabled(String provider) {
+                Intent i = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+            }
+        };
+
+
+
+
     }
+
 
     @Override
     public void onMapReady(@NonNull MapboxMap mapboxMap) {
@@ -100,6 +203,7 @@ private LocationEngine locationEngine;
         mapboxMap.setStyle(new Style.Builder().fromUri("mapbox://styles/parn9399/ckk7oc9rm0ky017lt2tele1cj"), new Style.OnStyleLoaded() {
             @Override
             public void onStyleLoaded(@NonNull Style style) {
+                Log.i("parnish","style");
                 enableLocationComponent(style);
                 // Assign progressBar for later use
                 progressBar = findViewById(R.id.progress_bar);
@@ -126,8 +230,8 @@ private LocationEngine locationEngine;
                     }
                 });
                 buildingPlugin = new BuildingPlugin(mapView, map, style);
-                buildingPlugin.setMinZoomLevel(20f);
-                buildingPlugin.setVisibility(true);
+
+                flag = 1;
 
             }
         });
@@ -139,24 +243,28 @@ private LocationEngine locationEngine;
     @Override
     public void onResume() {
         super.onResume();
+        Log.i("parnish","mapview");
         mapView.onResume();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        Log.i("parnish","mapview");
         mapView.onStart();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+        Log.i("parnish","mapview");
         mapView.onStop();
     }
 
     @Override
     public void onPause() {
         super.onPause();
+        Log.i("parnish","mapview");
         mapView.onPause();
     }
 
@@ -494,7 +602,10 @@ private LocationEngine locationEngine;
                     .build();
 
 // Get an instance of the component
+            Log.i("parnish","map");
             LocationComponent locationComponent = map.getLocationComponent();
+
+
 
 // Activate with options
             locationComponent.activateLocationComponent(
@@ -506,7 +617,7 @@ private LocationEngine locationEngine;
             locationComponent.setLocationComponentEnabled(true);
 
 // Set the component's camera mode
-            locationComponent.setCameraMode(CameraMode.TRACKING);
+            locationComponent.setCameraMode(CameraMode.TRACKING_GPS);
 
 // Set the component's render mode
             locationComponent.setRenderMode(RenderMode.COMPASS);
@@ -519,6 +630,21 @@ private LocationEngine locationEngine;
     }
 
 
+/**
+ * Set up the LocationEngine and the parameters for querying the device's location
+ */
+        @SuppressLint("MissingPermission")
+        private void initLocationEngine() {
+            locationEngine = LocationEngineProvider.getBestLocationEngine(this);
+
+            LocationEngineRequest request = new LocationEngineRequest.Builder(100)
+            .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
+            .setMaxWaitTime(5).build();
+
+            locationEngine.requestLocationUpdates(request, callback, getMainLooper());
+            locationEngine.getLastLocation(callback);
+        }
+
 
 
 
@@ -530,6 +656,22 @@ private LocationEngine locationEngine;
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         permissionsManager.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == 100) {
+
+            if (grantResults[0] == PackageManager.PERMISSION_GRANTED && grantResults[1] == PackageManager.PERMISSION_GRANTED) {      //This if checks whether the  permission is granted after asking for permission
+
+                if (Build.VERSION.SDK_INT >= 23 && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                        != PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        != PackageManager.PERMISSION_GRANTED) {
+
+                    locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, locationListener);
+                    Log.i("permission","permission");
+                    Toast.makeText(this, "permission", Toast.LENGTH_LONG).show();
+                }
+
+            }
+        }
     }
 
     @Override
@@ -547,4 +689,115 @@ private LocationEngine locationEngine;
         }
 
     }
+
+    public void back(){
+
+            CameraPosition back = new CameraPosition.Builder()
+                    .target(new LatLng(map.getLocationComponent().getLastKnownLocation().getLatitude(), map.getLocationComponent().getLastKnownLocation().getLongitude()))
+                    .zoom(map.getCameraPosition().zoom)
+                    .tilt(map.getCameraPosition().tilt)
+                    .build();
+
+            map.animateCamera(CameraUpdateFactory.newCameraPosition(back));
+
+    }
+
+    public void setBuildingPlugin(){
+        if(flag == 1) {
+            Log.i("parnish","flag 1");
+            map.getStyle(new Style.OnStyleLoaded() {
+                @Override
+                public void onStyleLoaded(@NonNull Style style) {
+                    Log.i("parnish","test7");
+                    /*Layer building = style.getLayer("building-extrusion");
+                    if(building != null ){
+                        Log.i("test","yes");
+                        building.getId();
+                        building.setDetached();
+                    }*/
+                    buildingPlugin.setVisibility(false);
+                }
+            });
+            if(locationNew != null) {
+                gps = new CameraPosition.Builder()
+                        .target(new LatLng(locationNew.getLatitude(), locationNew.getLongitude()))
+                        .zoom(map.getCameraPosition().zoom)
+                        .tilt(map.getCameraPosition().tilt)
+                        .build();
+
+                map.animateCamera(CameraUpdateFactory.newCameraPosition(gps));
+            }
+            flag = 0;
+
+        }
+        else{
+
+            Log.i("parnish","test2");
+            map.getStyle(new Style.OnStyleLoaded() {
+                @Override
+                public void onStyleLoaded(@NonNull Style style) {
+                    Log.i("parnish","test3");
+                    buildingPlugin.setVisibility(true);
+                }
+            });
+            flag = 1;
+            Toast.makeText(this, "TRUE", Toast.LENGTH_LONG).show();
+
+        }
+
+    }
+
+
+    private static class MainActivityLocationCallback
+            implements LocationEngineCallback<LocationEngineResult> {
+
+        private final WeakReference<MainActivity> activityWeakReference;
+
+        MainActivityLocationCallback(MainActivity activity) {
+            this.activityWeakReference = new WeakReference<>(activity);
+        }
+
+        /**
+         * The LocationEngineCallback interface's method which fires when the device's location has changed.
+         *
+         * @param result the LocationEngineResult object which has the last known location within it.
+         */
+        @Override
+        public void onSuccess(LocationEngineResult result) {
+            MainActivity activity = activityWeakReference.get();
+
+            if (activity != null) {
+                Location location = result.getLastLocation();
+
+                if (location == null) {
+                    return;
+                }
+
+
+
+            // Pass the new location to the Maps SDK's LocationComponent
+                if (activity.map != null && result.getLastLocation() != null) {
+                    Log.i("parnish","maponsuccess");
+                    activity.map.getLocationComponent().forceLocationUpdate(result.getLastLocation());
+                }
+            }
+        }
+
+        /**
+         * The LocationEngineCallback interface's method which fires when the device's location can not be captured
+         *
+         * @param exception the exception message
+         */
+        @Override
+        public void onFailure(@NonNull Exception exception) {
+            Log.d("LocationChangeActivity", exception.getLocalizedMessage());
+            MainActivity activity = activityWeakReference.get();
+            if (activity != null) {
+                Toast.makeText(activity, exception.getLocalizedMessage(),
+                        Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+
 }
